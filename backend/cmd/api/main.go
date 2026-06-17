@@ -7,11 +7,7 @@ import (
 )
 
 func main() {
-	config := app.Config{
-		Port: "8080",
-	}
-
-	application := app.New(config)
+	application := app.New()
 
 	if err := application.Run(); err != nil {
 		log.Fatal(err)

@@ -4,7 +4,7 @@ import (
 	"log"
 	nethttp "net/http"
 
-	"myaukalo/backend/internal/storage"
+	memory "myaukalo/backend/internal/storage/memory"
 	httptransport "myaukalo/backend/internal/transport"
 )
 
@@ -14,7 +14,7 @@ type App struct {
 
 func New() *App {
 	mux := nethttp.NewServeMux()
-	store := storage.NewMemoryStorage()
+	store := memory.NewMemoryStorage()
 
 	httptransport.RegisterRoutes(mux, store)
 

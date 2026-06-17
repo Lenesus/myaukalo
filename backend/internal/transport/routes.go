@@ -3,11 +3,17 @@ package httptransport
 import (
 	"encoding/json"
 	nethttp "net/http"
+	"strings"
 
-	"myaukalo/backend/internal/storage"
+	memory "myaukalo/backend/internal/storage/memory"
 )
 
-func RegisterRoutes(mux *nethttp.ServeMux, store *storage.MemoryStorage) {
+type createMessageRequest struct {
+	Author string `json:"author"`
+	Text   string `json:"text"`
+}
+
+func RegisterRoutes(mux *nethttp.ServeMux, store *memory.MemoryStorage) {
 	mux.HandleFunc("/health", handleHealth)
 
 	mux.HandleFunc("/api/v1/chats", func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -15,33 +21,75 @@ func RegisterRoutes(mux *nethttp.ServeMux, store *storage.MemoryStorage) {
 	})
 
 	mux.HandleFunc("/api/v1/chats/", func(w nethttp.ResponseWriter, r *nethttp.Request) {
-			handleChatMessages(w, r, store)
-		})
-
+		handleChatMessages(w, r, store)
+	})
 
 	mux.HandleFunc("/api/v1/messages", func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		handleMessages(w, r, store)
 	})
 }
 
-func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *storage.MemoryStorage) {
-	if r.Method != nethttp.MethodGet {
-		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
-			"error": "method not allowed",
+func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage) {
+	const prefix = "/api/v1/chats/"
+	const suffix = "/messages"
+
+	if !strings.HasPrefix(r.URL.Path, prefix) || !strings.HasSuffix(r.URL.Path, suffix) {
+		writeJSON(w, nethttp.StatusNotFound, map[string]string{
+			"error": "not found",
 		})
 		return
 	}
 
-	chatID := r.URL.Path[len("/api/v1/chats/"):]
-	chatID = chaID[:len(chatID)-len("/messages")]
+	chatID := strings.TrimPrefix(r.URL.Path, prefix)
+	chatID = strings.TrimSuffix(chatID, suffix)
 
-	messages := store.GetMessagesByChatID(chatID)
+	if chatID == "" {
+		writeJSON(w, nethttp.StatusBadRequest, map[string]string{
+			"error": "chat id is required",
+		})
+		return
+	}
 
-	writeJSON(w, nethttp.StatusOK, map[string]any{
-		"chat__id": chatID,
-		"items": messages,
-	})
+	switch r.Method {
+	case nethttp.MethodGet:
+		messages := store.GetMessagesByChatID(chatID)
 
+		writeJSON(w, nethttp.StatusOK, map[string]any{
+			"chat_id": chatID,
+			"items":   messages,
+		})
+	case nethttp.MethodPost:
+		var request createMessageRequest
+
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
+				"error": "invalid json",
+			})
+			return
+		}
+
+		if request.Author == "" || request.Text == "" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
+				"error": "author and text are required",
+			})
+			return
+		}
+
+		message, err := store.AddMessage(chatID, request.Author, request.Text)
+		if err != nil {
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{
+				"error": "failed to create a message",
+			})
+			return
+		}
+
+		writeJSON(w, nethttp.StatusCreated, message)
+
+	default:
+		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
+			"error": "method not allowed",
+		})
+	}
 }
 
 func handleHealth(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -58,7 +106,7 @@ func handleHealth(w nethttp.ResponseWriter, r *nethttp.Request) {
 	})
 }
 
-func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store *storage.MemoryStorage) {
+func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage) {
 	switch r.Method {
 	case nethttp.MethodGet:
 		chats := store.GetChats()
@@ -79,7 +127,7 @@ func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store *storage.Me
 	}
 }
 
-func handleMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *storage.MemoryStorage) {
+func handleMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage) {
 	switch r.Method {
 	case nethttp.MethodGet:
 		messages := store.GetMessages()
