@@ -2,9 +2,10 @@ package memory
 
 import (
 	"fmt"
-	"time"
 	"myaukalo/backend/internal/domain"
+	"time"
 )
+
 type MemoryStorage struct {
 	chats    []domain.Chat
 	messages []domain.Message
@@ -54,6 +55,16 @@ func NewMemoryStorage() *MemoryStorage {
 
 func (s *MemoryStorage) GetChats() []domain.Chat {
 	return s.chats
+}
+
+func (s *MemoryStorage) GetChatByID(chatID string) (domain.Chat, bool) {
+	for _, chat := range s.chats {
+		if chat.ID == chatID {
+			return chat, true
+		}
+	}
+
+	return domain.Chat{}, false
 }
 
 func (s *MemoryStorage) GetMessages() []domain.Message {

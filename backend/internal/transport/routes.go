@@ -50,6 +50,14 @@ func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *mem
 		return
 	}
 
+	_, found := store.GetChatByID(chatID)
+	if !found {
+		writeJSON(w, nethttp.StatusNotFound, map[string]string{
+			"error": "chat not found",
+		})
+		return
+	}
+
 	switch r.Method {
 	case nethttp.MethodGet:
 		messages := store.GetMessagesByChatID(chatID)
