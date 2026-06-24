@@ -67,6 +67,19 @@ func (s *MemoryStorage) GetChatByID(chatID string) (domain.Chat, bool) {
 	return domain.Chat{}, false
 }
 
+func (s *MemoryStorage) AddChat(title string) domain.Chat {
+	chat := domain.Chat{
+		ID:          fmt.Sprintf("chat-%d", len(s.chats)+1),
+		Title:       title,
+		LastMessage: "",
+		UnreadCount: 0,
+	}
+
+	s.chats = append(s.chats, chat)
+
+	return chat
+}
+
 func (s *MemoryStorage) GetMessages() []domain.Message {
 	return s.messages
 }

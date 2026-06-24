@@ -8,6 +8,10 @@ import (
 	memory "myaukalo/backend/internal/storage/memory"
 )
 
+type createChatRequest struct {
+	Title string `json:"title"`
+}
+
 type createMessageRequest struct {
 	Author string `json:"author"`
 	Text   string `json:"text"`
@@ -124,9 +128,26 @@ func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.Mem
 		})
 
 	case nethttp.MethodPost:
-		writeJSON(w, nethttp.StatusNotImplemented, map[string]string{
-			"message": "chat creation is not implemented yet",
-		})
+		var request createChatRequest
+
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
+				"error": "invalid json",
+			})
+			return
+		}
+
+		title := strings.TrimSpace(request.Title)
+		if title == "" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
+				"error": "title is required",
+			})
+			return
+		}
+
+		chat := store.AddChat(title)
+
+		writeJSON(w, nethttp.StatusCreated, chat)
 
 	default:
 		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
