@@ -80,14 +80,18 @@ func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *mem
 			return
 		}
 
-		if request.Author == "" || request.Text == "" {
+		author := strings.TrimSpace(request.Author)
+		text := strings.TrimSpace(request.Text)
+
+		if author == "" || text == "" {
 			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
 				"error": "author and text are required",
 			})
 			return
 		}
 
-		message, err := store.AddMessage(chatID, request.Author, request.Text)
+		message, err := store.AddMessage(chatID, author, text)
+
 		if err != nil {
 			writeJSON(w, nethttp.StatusInternalServerError, map[string]string{
 				"error": "failed to create a message",

@@ -97,6 +97,19 @@ func (s *MemoryStorage) GetMessagesByChatID(chatID string) []domain.Message {
 }
 
 func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (domain.Message, error) {
+
+	chatIndex := -1
+	for i, chat := range s.chats {
+		if chat.ID == chatID {
+			chatIndex = i
+			break
+		}
+	}
+
+	if chatIndex == -1 {
+		return domain.Message{}, fmt.Errorf("chat not found")
+	}
+
 	message := domain.Message{
 		ID:        fmt.Sprintf("msg-%d", len(s.messages)+1),
 		ChatID:    chatID,
@@ -106,6 +119,8 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (d
 	}
 
 	s.messages = append(s.messages, message)
+	s.chats[chatIndex].LastMessage = text
 
 	return message, nil
+
 }
