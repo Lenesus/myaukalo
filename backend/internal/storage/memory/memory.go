@@ -79,6 +79,20 @@ func (s *MemoryStorage) GetChatByID(chatID string) (domain.Chat, bool) {
 	return domain.Chat{}, false
 }
 
+func (s *MemoryStorage) MarkChatAsRead(chatID string) (domain.Chat, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for index, chat := range s.chats {
+		if chat.ID == chatID {
+			s.chats[index].UnreadCount = 0
+			return s.chats[index], true
+		}
+	}
+
+	return domain.Chat{}, false
+}
+
 func (s *MemoryStorage) AddChat(title string) domain.Chat {
 	s.mu.Lock()
 	defer s.mu.Unlock()

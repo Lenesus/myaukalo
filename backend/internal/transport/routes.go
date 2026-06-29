@@ -25,7 +25,22 @@ func RegisterRoutes(mux *nethttp.ServeMux, store *memory.MemoryStorage) {
 	})
 
 	mux.HandleFunc("/api/v1/chats/", func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		handleChatMessages(w, r, store)
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/chats/")
+
+		if strings.HasSuffix(path, "/read") {
+			chatID := strings.TrimSuffix(path, "/read")
+			handleChatRead(w, r, store, chatID)
+			return
+		}
+
+		if strings.HasSuffix(path, "/messages") {
+			handleChatMessages(w, r, store)
+			return
+		}
+
+		writeJSON(w, nethttp.StatusNotFound, map[string]string{
+			"error": "not found",
+		})
 	})
 
 	mux.HandleFunc("/api/v1/messages", func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -106,6 +121,32 @@ func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *mem
 			"error": "method not allowed",
 		})
 	}
+}
+
+func handleChatRead(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage, chatID string) {
+	if r.Method != nethttp.MethodPost {
+		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
+			"error": "method not allowed",
+		})
+		return
+	}
+
+	if chatID == "" {
+		writeJSON(w, nethttp.StatusBadRequest, map[string]string{
+			"error": "chat id is required",
+		})
+		return
+	}
+
+	chat, found := store.MarkChatAsRead(chatID)
+	if !found {
+		writeJSON(w, nethttp.StatusNotFound, map[string]string{
+			"error": "chat not found",
+		})
+		return
+	}
+
+	writeJSON(w, nethttp.StatusOK, chat)
 }
 
 func handleHealth(w nethttp.ResponseWriter, r *nethttp.Request) {
