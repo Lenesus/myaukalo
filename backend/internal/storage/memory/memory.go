@@ -2,11 +2,14 @@ package memory
 
 import (
 	"fmt"
-	"myaukalo/backend/internal/domain"
+	"sync"
 	"time"
+
+	"myaukalo/backend/internal/domain"
 )
 
 type MemoryStorage struct {
+	mu       sync.RWMutex
 	chats    []domain.Chat
 	messages []domain.Message
 }
@@ -54,10 +57,19 @@ func NewMemoryStorage() *MemoryStorage {
 }
 
 func (s *MemoryStorage) GetChats() []domain.Chat {
-	return s.chats
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	chats := make([]domain.Chat, len(s.chats))
+	copy(chats, s.chats)
+
+	return chats
 }
 
 func (s *MemoryStorage) GetChatByID(chatID string) (domain.Chat, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	for _, chat := range s.chats {
 		if chat.ID == chatID {
 			return chat, true
@@ -68,6 +80,9 @@ func (s *MemoryStorage) GetChatByID(chatID string) (domain.Chat, bool) {
 }
 
 func (s *MemoryStorage) AddChat(title string) domain.Chat {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	chat := domain.Chat{
 		ID:          fmt.Sprintf("chat-%d", len(s.chats)+1),
 		Title:       title,
@@ -81,10 +96,19 @@ func (s *MemoryStorage) AddChat(title string) domain.Chat {
 }
 
 func (s *MemoryStorage) GetMessages() []domain.Message {
-	return s.messages
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	messages := make([]domain.Message, len(s.messages))
+	copy(messages, s.messages)
+
+	return messages
 }
 
 func (s *MemoryStorage) GetMessagesByChatID(chatID string) []domain.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	result := make([]domain.Message, 0)
 
 	for _, message := range s.messages {
@@ -97,11 +121,14 @@ func (s *MemoryStorage) GetMessagesByChatID(chatID string) []domain.Message {
 }
 
 func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (domain.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	chatIndex := -1
-	for i, chat := range s.chats {
+
+	for index, chat := range s.chats {
 		if chat.ID == chatID {
-			chatIndex = i
+			chatIndex = index
 			break
 		}
 	}
@@ -120,6 +147,7 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (d
 
 	s.messages = append(s.messages, message)
 	s.chats[chatIndex].LastMessage = text
+	s.chats[chatIndex].UnreadCount++
 
 	return message, nil
 
