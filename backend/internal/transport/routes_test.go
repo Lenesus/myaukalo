@@ -177,3 +177,124 @@ func TestCreateMessageUpdatesChatPreview(t *testing.T) {
 		)
 	}
 }
+
+func TestMarkChatAsRead(t *testing.T) {
+	store := memory.NewMemoryStorage()
+	handler := newTestHandler(store)
+
+	messageRequestBody := `{
+		"author":"Барсик",
+		"text":"Новое непрочитанное сообщение"
+	}`
+
+	messageRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/chats/chat-1/messages",
+		strings.NewReader(messageRequestBody),
+	)
+
+	messageRequest.Header.Set("Content-Type", "application/json")
+
+	messageResponse := httptest.NewRecorder()
+
+	handler.ServeHTTP(messageResponse, messageRequest)
+
+	if messageResponse.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusCreated,
+			messageResponse.Code,
+		)
+	}
+
+	chatBeforeRead, found := store.GetChatByID("chat-1")
+	if !found {
+		t.Fatal("expected chat-1 to exist")
+	}
+
+	if chatBeforeRead.UnreadCount == 0 {
+		t.Fatal("expected unread count to be greater than zero before marking as read")
+	}
+
+	readRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/chats/chat-1/read",
+		nil,
+	)
+
+	readResponse := httptest.NewRecorder()
+
+	handler.ServeHTTP(readResponse, readRequest)
+
+	if readResponse.Code != http.StatusOK {
+		t.Fatalf(
+			"expected read status %d, got %d",
+			http.StatusOK,
+			readResponse.Code,
+		)
+	}
+
+	var updatedChat domain.Chat
+
+	if err := json.NewDecoder(readResponse.Body).Decode(&updatedChat); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if updatedChat.UnreadCount != 0 {
+		t.Errorf(
+			"expected response unread count %d, got %d",
+			0,
+			updatedChat.UnreadCount,
+		)
+	}
+
+	storedChat, found := store.GetChatByID("chat-1")
+	if !found {
+		t.Fatal("expected chat-1 to exist")
+	}
+
+	if storedChat.UnreadCount != 0 {
+		t.Errorf(
+			"expected stored unread count %d, got %d",
+			0,
+			storedChat.UnreadCount,
+		)
+	}
+}
+
+func TestMarkUnknownChatAsReadReturnsNotFound(t *testing.T) {
+	store := memory.NewMemoryStorage()
+	handler := newTestHandler(store)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/chats/no-such-chat/read",
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusNotFound,
+			response.Code,
+		)
+	}
+
+	var responseBody map[string]string
+
+	if err := json.NewDecoder(response.Body).Decode(&responseBody); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if responseBody["error"] != "chat not found" {
+		t.Errorf(
+			"expected error %q, got %q",
+			"chat not found",
+			responseBody["error"],
+		)
+	}
+}
