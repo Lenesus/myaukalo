@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"myaukalo/backend/internal/domain"
+	storagecontract "myaukalo/backend/internal/storage"
 )
 
 type MemoryStorage struct {
@@ -59,6 +60,8 @@ func NewMemoryStorage() *MemoryStorage {
 		nextMessageID: 4,
 	}
 }
+
+var _ storagecontract.Storage = (*MemoryStorage)(nil)
 
 func (s *MemoryStorage) GetChats() []domain.Chat {
 	s.mu.RLock()

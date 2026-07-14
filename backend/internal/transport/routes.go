@@ -5,7 +5,7 @@ import (
 	nethttp "net/http"
 	"strings"
 
-	"myaukalo/backend/internal/storage/memory"
+	"myaukalo/backend/internal/storage"
 )
 
 type createChatRequest struct {
@@ -17,7 +17,7 @@ type createMessageRequest struct {
 	Text   string `json:"text"`
 }
 
-func RegisterRoutes(mux *nethttp.ServeMux, store *memory.MemoryStorage) {
+func RegisterRoutes(mux *nethttp.ServeMux, store storage.Storage) {
 	mux.HandleFunc("/health", handleHealth)
 
 	mux.HandleFunc("/api/v1/chats", func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -73,7 +73,7 @@ func handleHealth(w nethttp.ResponseWriter, r *nethttp.Request) {
 	})
 }
 
-func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage) {
+func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage) {
 	switch r.Method {
 	case nethttp.MethodGet:
 		chats := store.GetChats()
@@ -111,7 +111,7 @@ func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.Mem
 	}
 }
 
-func handleChatByID(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage, chatID string) {
+func handleChatByID(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage, chatID string) {
 	if r.Method != nethttp.MethodGet {
 		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
 			"error": "method not allowed",
@@ -130,7 +130,7 @@ func handleChatByID(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.
 	writeJSON(w, nethttp.StatusOK, chat)
 }
 
-func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage, chatID string) {
+func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage, chatID string) {
 
 	if chatID == "" {
 		writeJSON(w, nethttp.StatusBadRequest, map[string]string{
@@ -193,7 +193,7 @@ func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *mem
 	}
 }
 
-func handleChatRead(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage, chatID string) {
+func handleChatRead(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage, chatID string) {
 	if r.Method != nethttp.MethodPost {
 		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
 			"error": "method not allowed",
@@ -219,7 +219,7 @@ func handleChatRead(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.
 	writeJSON(w, nethttp.StatusOK, chat)
 }
 
-func handleMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage) {
+func handleMessages(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage) {
 	switch r.Method {
 	case nethttp.MethodGet:
 		messages := store.GetMessages()
