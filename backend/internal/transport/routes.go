@@ -26,21 +26,32 @@ func RegisterRoutes(mux *nethttp.ServeMux, store *memory.MemoryStorage) {
 
 	mux.HandleFunc("/api/v1/chats/", func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/chats/")
+		path = strings.Trim(path, "/")
 
-		if strings.HasSuffix(path, "/read") {
-			chatID := strings.TrimSuffix(path, "/read")
-			handleChatRead(w, r, store, chatID)
+		if path == "" {
+			writeJSON(w, nethttp.StatusNotFound, map[string]string{
+				"error": "not found",
+			})
 			return
 		}
 
-		if strings.HasSuffix(path, "/messages") {
-			handleChatMessages(w, r, store)
-			return
-		}
+		parts := strings.Split(path, "/")
 
-		writeJSON(w, nethttp.StatusNotFound, map[string]string{
-			"error": "not found",
-		})
+		switch {
+		case len(parts) == 1:
+			handleChatByID(w, r, store, parts[0])
+
+		case len(parts) == 2 && parts[1] == "messages":
+			handleChatMessages(w, r, store, parts[0])
+
+		case len(parts) == 2 && parts[1] == "read":
+			handleChatRead(w, r, store, parts[0])
+
+		default:
+			writeJSON(w, nethttp.StatusNotFound, map[string]string{
+				"error": "not found",
+			})
+		}
 	})
 
 	mux.HandleFunc("/api/v1/messages", func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -100,19 +111,26 @@ func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.Mem
 	}
 }
 
-func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage) {
-	const prefix = "/api/v1/chats/"
-	const suffix = "/messages"
-
-	if !strings.HasPrefix(r.URL.Path, prefix) || !strings.HasSuffix(r.URL.Path, suffix) {
-		writeJSON(w, nethttp.StatusNotFound, map[string]string{
-			"error": "not found",
+func handleChatByID(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage, chatID string) {
+	if r.Method != nethttp.MethodGet {
+		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
+			"error": "method not allowed",
 		})
 		return
 	}
 
-	chatID := strings.TrimPrefix(r.URL.Path, prefix)
-	chatID = strings.TrimSuffix(chatID, suffix)
+	chat, found := store.GetChatByID(chatID)
+	if !found {
+		writeJSON(w, nethttp.StatusNotFound, map[string]string{
+			"error": "chat not found",
+		})
+		return
+	}
+
+	writeJSON(w, nethttp.StatusOK, chat)
+}
+
+func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store *memory.MemoryStorage, chatID string) {
 
 	if chatID == "" {
 		writeJSON(w, nethttp.StatusBadRequest, map[string]string{
