@@ -9,9 +9,11 @@ import (
 )
 
 type MemoryStorage struct {
-	mu       sync.RWMutex
-	chats    []domain.Chat
-	messages []domain.Message
+	mu            sync.RWMutex
+	chats         []domain.Chat
+	messages      []domain.Message
+	nextChatID    int
+	nextMessageID int
 }
 
 func NewMemoryStorage() *MemoryStorage {
@@ -53,6 +55,8 @@ func NewMemoryStorage() *MemoryStorage {
 				CreatedAt: "2026-05-20T13:02:00Z",
 			},
 		},
+		nextChatID:    3,
+		nextMessageID: 4,
 	}
 }
 
@@ -98,12 +102,13 @@ func (s *MemoryStorage) AddChat(title string) domain.Chat {
 	defer s.mu.Unlock()
 
 	chat := domain.Chat{
-		ID:          fmt.Sprintf("chat-%d", len(s.chats)+1),
+		ID:          fmt.Sprintf("chat-%d", s.nextChatID),
 		Title:       title,
 		LastMessage: "",
 		UnreadCount: 0,
 	}
 
+	s.nextChatID++
 	s.chats = append(s.chats, chat)
 
 	return chat
@@ -152,12 +157,14 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (d
 	}
 
 	message := domain.Message{
-		ID:        fmt.Sprintf("msg-%d", len(s.messages)+1),
+		ID:        fmt.Sprintf("msg-%d", s.nextMessageID),
 		ChatID:    chatID,
 		Author:    author,
 		Text:      text,
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
+
+	s.nextMessageID++
 
 	s.messages = append(s.messages, message)
 	s.chats[chatIndex].LastMessage = text
