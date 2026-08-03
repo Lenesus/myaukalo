@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"encoding/json"
+	"errors"
 	nethttp "net/http"
 	"strings"
 
@@ -17,232 +18,402 @@ type createMessageRequest struct {
 	Text   string `json:"text"`
 }
 
-func RegisterRoutes(mux *nethttp.ServeMux, store storage.Storage) {
-	mux.HandleFunc("/health", handleHealth)
+// RegisterRoutes регистрирует HTTP-маршруты приложения
+// в переданном маршрутизаторе mux.
+func RegisterRoutes(
+	mux *nethttp.ServeMux,
+	store storage.Storage,
+) {
+	mux.HandleFunc(
+		"/api/v1/chats",
+		func(w nethttp.ResponseWriter, r *nethttp.Request) {
+			handleChats(w, r, store)
+		},
+	)
 
-	mux.HandleFunc("/api/v1/chats", func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		handleChats(w, r, store)
-	})
+	mux.HandleFunc(
+		"/api/v1/chats/",
+		func(w nethttp.ResponseWriter, r *nethttp.Request) {
+			handleChatRoute(w, r, store)
+		},
+	)
 
-	mux.HandleFunc("/api/v1/chats/", func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/api/v1/chats/")
-		path = strings.Trim(path, "/")
-
-		if path == "" {
-			writeJSON(w, nethttp.StatusNotFound, map[string]string{
-				"error": "not found",
-			})
-			return
-		}
-
-		parts := strings.Split(path, "/")
-
-		switch {
-		case len(parts) == 1:
-			handleChatByID(w, r, store, parts[0])
-
-		case len(parts) == 2 && parts[1] == "messages":
-			handleChatMessages(w, r, store, parts[0])
-
-		case len(parts) == 2 && parts[1] == "read":
-			handleChatRead(w, r, store, parts[0])
-
-		default:
-			writeJSON(w, nethttp.StatusNotFound, map[string]string{
-				"error": "not found",
-			})
-		}
-	})
-
-	mux.HandleFunc("/api/v1/messages", func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		handleMessages(w, r, store)
-	})
+	mux.HandleFunc(
+		"/api/v1/messages",
+		func(w nethttp.ResponseWriter, r *nethttp.Request) {
+			handleMessages(w, r, store)
+		},
+	)
 }
 
-func handleHealth(w nethttp.ResponseWriter, r *nethttp.Request) {
-	if r.Method != nethttp.MethodGet {
-		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
-			"error": "method not allowed",
-		})
+func handleChats(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+) {
+	switch r.Method {
+	case nethttp.MethodGet:
+		handleGetChats(w, store)
+
+	case nethttp.MethodPost:
+		handleCreateChat(w, r, store)
+
+	default:
+		writeJSON(
+			w,
+			nethttp.StatusMethodNotAllowed,
+			map[string]string{
+				"error": "method not allowed",
+			},
+		)
+	}
+}
+
+func handleGetChats(
+	w nethttp.ResponseWriter,
+	store storage.Storage,
+) {
+	chats, err := store.GetChats()
+	if err != nil {
+		writeStorageError(w, err)
 		return
 	}
 
-	writeJSON(w, nethttp.StatusOK, map[string]string{
-		"status":  "ok",
-		"service": "myaukalo-backend",
-	})
+	writeJSON(w, nethttp.StatusOK, chats)
 }
 
-func handleChats(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage) {
-	switch r.Method {
-	case nethttp.MethodGet:
-		chats := store.GetChats()
+func handleCreateChat(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+) {
+	var request createChatRequest
 
-		writeJSON(w, nethttp.StatusOK, map[string]any{
-			"items": chats,
-		})
+	err := json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		writeJSON(
+			w,
+			nethttp.StatusBadRequest,
+			map[string]string{
+				"error": "invalid request body",
+			},
+		)
+		return
+	}
 
-	case nethttp.MethodPost:
-		var request createChatRequest
+	request.Title = strings.TrimSpace(request.Title)
 
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
-				"error": "invalid json",
-			})
-			return
-		}
-
-		title := strings.TrimSpace(request.Title)
-		if title == "" {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
+	if request.Title == "" {
+		writeJSON(
+			w,
+			nethttp.StatusBadRequest,
+			map[string]string{
 				"error": "title is required",
-			})
-			return
-		}
-
-		chat := store.AddChat(title)
-
-		writeJSON(w, nethttp.StatusCreated, chat)
-
-	default:
-		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
-			"error": "method not allowed",
-		})
+			},
+		)
+		return
 	}
+
+	chat, err := store.AddChat(request.Title)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+
+	writeJSON(w, nethttp.StatusCreated, chat)
 }
 
-func handleChatByID(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage, chatID string) {
+func handleChatRoute(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+) {
+	path := strings.TrimPrefix(
+		r.URL.Path,
+		"/api/v1/chats/",
+	)
+
+	path = strings.Trim(path, "/")
+
+	if path == "" {
+		writeJSON(
+			w,
+			nethttp.StatusNotFound,
+			map[string]string{
+				"error": "route not found",
+			},
+		)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 1 {
+		handleChatByID(
+			w,
+			r,
+			store,
+			parts[0],
+		)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "messages" {
+		handleChatMessages(
+			w,
+			r,
+			store,
+			parts[0],
+		)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "read" {
+		handleChatRead(
+			w,
+			r,
+			store,
+			parts[0],
+		)
+		return
+	}
+
+	writeJSON(
+		w,
+		nethttp.StatusNotFound,
+		map[string]string{
+			"error": "route not found",
+		},
+	)
+}
+
+func handleChatByID(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+	chatID string,
+) {
 	if r.Method != nethttp.MethodGet {
-		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
-			"error": "method not allowed",
-		})
+		writeJSON(
+			w,
+			nethttp.StatusMethodNotAllowed,
+			map[string]string{
+				"error": "method not allowed",
+			},
+		)
 		return
 	}
 
-	chat, found := store.GetChatByID(chatID)
-	if !found {
-		writeJSON(w, nethttp.StatusNotFound, map[string]string{
-			"error": "chat not found",
-		})
+	chat, err := store.GetChatByID(chatID)
+	if err != nil {
+		writeStorageError(w, err)
 		return
 	}
 
 	writeJSON(w, nethttp.StatusOK, chat)
 }
 
-func handleChatMessages(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage, chatID string) {
-
-	if chatID == "" {
-		writeJSON(w, nethttp.StatusBadRequest, map[string]string{
-			"error": "chat id is required",
-		})
-		return
-	}
-
-	_, found := store.GetChatByID(chatID)
-	if !found {
-		writeJSON(w, nethttp.StatusNotFound, map[string]string{
-			"error": "chat not found",
-		})
+func handleChatMessages(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+	chatID string,
+) {
+	_, err := store.GetChatByID(chatID)
+	if err != nil {
+		writeStorageError(w, err)
 		return
 	}
 
 	switch r.Method {
 	case nethttp.MethodGet:
-		messages := store.GetMessagesByChatID(chatID)
-
-		writeJSON(w, nethttp.StatusOK, map[string]any{
-			"chat_id": chatID,
-			"items":   messages,
-		})
+		handleGetChatMessages(
+			w,
+			store,
+			chatID,
+		)
 
 	case nethttp.MethodPost:
-		var request createMessageRequest
-
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
-				"error": "invalid json",
-			})
-			return
-		}
-
-		author := strings.TrimSpace(request.Author)
-		text := strings.TrimSpace(request.Text)
-
-		if author == "" || text == "" {
-			writeJSON(w, nethttp.StatusBadRequest, map[string]string{
-				"error": "author and text are required",
-			})
-			return
-		}
-
-		message, err := store.AddMessage(chatID, author, text)
-		if err != nil {
-			writeJSON(w, nethttp.StatusNotFound, map[string]string{
-				"error": "chat not found",
-			})
-			return
-		}
-
-		writeJSON(w, nethttp.StatusCreated, message)
+		handleCreateMessage(
+			w,
+			r,
+			store,
+			chatID,
+		)
 
 	default:
-		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
-			"error": "method not allowed",
-		})
+		writeJSON(
+			w,
+			nethttp.StatusMethodNotAllowed,
+			map[string]string{
+				"error": "method not allowed",
+			},
+		)
 	}
 }
 
-func handleChatRead(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage, chatID string) {
+func handleGetChatMessages(
+	w nethttp.ResponseWriter,
+	store storage.Storage,
+	chatID string,
+) {
+	messages, err := store.GetMessagesByChatID(chatID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+
+	writeJSON(w, nethttp.StatusOK, messages)
+}
+
+func handleCreateMessage(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+	chatID string,
+) {
+	var request createMessageRequest
+
+	err := json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		writeJSON(
+			w,
+			nethttp.StatusBadRequest,
+			map[string]string{
+				"error": "invalid request body",
+			},
+		)
+		return
+	}
+
+	request.Author = strings.TrimSpace(request.Author)
+	request.Text = strings.TrimSpace(request.Text)
+
+	if request.Author == "" {
+		writeJSON(
+			w,
+			nethttp.StatusBadRequest,
+			map[string]string{
+				"error": "author is required",
+			},
+		)
+		return
+	}
+
+	if request.Text == "" {
+		writeJSON(
+			w,
+			nethttp.StatusBadRequest,
+			map[string]string{
+				"error": "text is required",
+			},
+		)
+		return
+	}
+
+	message, err := store.AddMessage(
+		chatID,
+		request.Author,
+		request.Text,
+	)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+
+	writeJSON(
+		w,
+		nethttp.StatusCreated,
+		message,
+	)
+}
+
+func handleChatRead(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+	chatID string,
+) {
 	if r.Method != nethttp.MethodPost {
-		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
-			"error": "method not allowed",
-		})
+		writeJSON(
+			w,
+			nethttp.StatusMethodNotAllowed,
+			map[string]string{
+				"error": "method not allowed",
+			},
+		)
 		return
 	}
 
-	if chatID == "" {
-		writeJSON(w, nethttp.StatusBadRequest, map[string]string{
-			"error": "chat id is required",
-		})
-		return
-	}
-
-	chat, found := store.MarkChatAsRead(chatID)
-	if !found {
-		writeJSON(w, nethttp.StatusNotFound, map[string]string{
-			"error": "chat not found",
-		})
+	chat, err := store.MarkChatAsRead(chatID)
+	if err != nil {
+		writeStorageError(w, err)
 		return
 	}
 
 	writeJSON(w, nethttp.StatusOK, chat)
 }
 
-func handleMessages(w nethttp.ResponseWriter, r *nethttp.Request, store storage.Storage) {
-	switch r.Method {
-	case nethttp.MethodGet:
-		messages := store.GetMessages()
-
-		writeJSON(w, nethttp.StatusOK, map[string]any{
-			"items": messages,
-		})
-
-	case nethttp.MethodPost:
-		writeJSON(w, nethttp.StatusNotImplemented, map[string]string{
-			"message": "message sending is not implemented yet",
-		})
-
-	default:
-		writeJSON(w, nethttp.StatusMethodNotAllowed, map[string]string{
-			"error": "method not allowed",
-		})
+func handleMessages(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+) {
+	if r.Method != nethttp.MethodGet {
+		writeJSON(
+			w,
+			nethttp.StatusMethodNotAllowed,
+			map[string]string{
+				"error": "method not allowed",
+			},
+		)
+		return
 	}
+
+	messages, err := store.GetMessages()
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+
+	writeJSON(w, nethttp.StatusOK, messages)
 }
 
-func writeJSON(w nethttp.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
+func writeStorageError(
+	w nethttp.ResponseWriter,
+	err error,
+) {
+	if errors.Is(err, storage.ErrChatNotFound) {
+		writeJSON(
+			w,
+			nethttp.StatusNotFound,
+			map[string]string{
+				"error": "chat not found",
+			},
+		)
+		return
+	}
+
+	writeJSON(
+		w,
+		nethttp.StatusInternalServerError,
+		map[string]string{
+			"error": "internal server error",
+		},
+	)
+}
+
+func writeJSON(
+	w nethttp.ResponseWriter,
+	statusCode int,
+	data any,
+) {
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	w.WriteHeader(statusCode)
 
 	_ = json.NewEncoder(w).Encode(data)
 }

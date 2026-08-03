@@ -62,9 +62,13 @@ func TestCreateChat(t *testing.T) {
 		t.Error("expected created chat to have an id")
 	}
 
-	storedChat, found := store.GetChatByID(createdChat.ID)
-	if !found {
-		t.Fatalf("created chat %q was not found in storage", createdChat.ID)
+	storedChat, err := store.GetChatByID(createdChat.ID)
+	if err != nil {
+		t.Fatalf(
+			"created chat %q was not found in storage: %v",
+			createdChat.ID,
+			err,
+		)
 	}
 
 	if storedChat.Title != createdChat.Title {
@@ -164,9 +168,9 @@ func TestCreateMessageUpdatesChatPreview(t *testing.T) {
 		)
 	}
 
-	chat, found := store.GetChatByID("chat-1")
-	if !found {
-		t.Fatal("expected chat-1 to exist")
+	chat, err := store.GetChatByID("chat-1")
+	if err != nil {
+		t.Fatalf("expected chat-1 to exist: %v", err)
 	}
 
 	if chat.LastMessage != createdMessage.Text {
@@ -207,13 +211,15 @@ func TestMarkChatAsRead(t *testing.T) {
 		)
 	}
 
-	chatBeforeRead, found := store.GetChatByID("chat-1")
-	if !found {
-		t.Fatal("expected chat-1 to exist")
+	chatBeforeRead, err := store.GetChatByID("chat-1")
+	if err != nil {
+		t.Fatalf("expected chat-1 to exist: %v", err)
 	}
 
 	if chatBeforeRead.UnreadCount == 0 {
-		t.Fatal("expected unread count to be greater than zero before marking as read")
+		t.Fatal(
+			"expected unread count to be greater than zero before marking as read",
+		)
 	}
 
 	readRequest := httptest.NewRequest(
@@ -248,9 +254,9 @@ func TestMarkChatAsRead(t *testing.T) {
 		)
 	}
 
-	storedChat, found := store.GetChatByID("chat-1")
-	if !found {
-		t.Fatal("expected chat-1 to exist")
+	storedChat, err := store.GetChatByID("chat-1")
+	if err != nil {
+		t.Fatalf("expected chat-1 to exist: %v", err)
 	}
 
 	if storedChat.UnreadCount != 0 {

@@ -5,8 +5,15 @@ import "testing"
 func TestAddChatGeneratesSequentialIDs(t *testing.T) {
 	store := NewMemoryStorage()
 
-	firstChat := store.AddChat("Первый новый чат")
-	secondChat := store.AddChat("Второй новый чат")
+	firstChat, err := store.AddChat("Первый новый чат")
+	if err != nil {
+		t.Fatalf("failed to add first chat: %v", err)
+	}
+
+	secondChat, err := store.AddChat("Второй новый чат")
+	if err != nil {
+		t.Fatalf("failed to add second chat: %v", err)
+	}
 
 	if firstChat.ID != "chat-3" {
 		t.Errorf(
