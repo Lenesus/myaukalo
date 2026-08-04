@@ -304,3 +304,177 @@ func TestMarkUnknownChatAsReadReturnsNotFound(t *testing.T) {
 		)
 	}
 }
+
+func TestCreateChatRejectsEmptyTitle(t *testing.T) {
+	store := memory.NewMemoryStorage()
+	handler := newTestHandler(store)
+
+	requestBody := `{"title":""}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/chats",
+		strings.NewReader(requestBody),
+	)
+
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	var responseBody map[string]string
+
+	err := json.NewDecoder(response.Body).Decode(&responseBody)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if responseBody["error"] != "title is required" {
+		t.Errorf(
+			"expected error %q, got %q",
+			"title is required",
+			responseBody["error"],
+		)
+	}
+}
+
+func TestCreateChatRejectsInvalidJSON(t *testing.T) {
+	store := memory.NewMemoryStorage()
+	handler := newTestHandler(store)
+
+	requestBody := `{"title":"Кошачий клуб"`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/chats",
+		strings.NewReader(requestBody),
+	)
+
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	var responseBody map[string]string
+
+	err := json.NewDecoder(response.Body).Decode(&responseBody)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if responseBody["error"] != "invalid request body" {
+		t.Errorf(
+			"expected error %q, got %q",
+			"invalid request body",
+			responseBody["error"],
+		)
+	}
+}
+
+func TestCreateMessageRejectsEmptyAuthor(t *testing.T) {
+	store := memory.NewMemoryStorage()
+	handler := newTestHandler(store)
+
+	requestBody := `{
+		"author": "  ",
+		"text": "Я нашёл новую коробку"
+}`
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/chats/chat-1/messages",
+		strings.NewReader(requestBody),
+	)
+
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	var responseBody map[string]string
+
+	err := json.NewDecoder(response.Body).Decode(&responseBody)
+
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if responseBody["error"] != "author is required" {
+		t.Errorf(
+			"expected error %q, got %q",
+			"author is required",
+			responseBody["error"],
+		)
+	}
+}
+
+func TestCreateMessageRejectsEmptyText(t *testing.T) {
+	store := memory.NewMemoryStorage()
+	handler := newTestHandler(store)
+
+	requestBody := `{
+		"author": "Барсик",
+		"text": "   "
+	}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/chats/chat-1/messages",
+		strings.NewReader(requestBody),
+	)
+
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	var responseBody map[string]string
+
+	err := json.NewDecoder(response.Body).Decode(&responseBody)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if responseBody["error"] != "text is required" {
+		t.Errorf(
+			"expected error %q, got %q",
+			"text is required",
+			responseBody["error"],
+		)
+	}
+}
