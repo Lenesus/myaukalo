@@ -4,18 +4,25 @@ import (
 	"log"
 	nethttp "net/http"
 
-	memory "myaukalo/backend/internal/storage/memory"
+	"myaukalo/backend/internal/storage/sqlite"
 	httptransport "myaukalo/backend/internal/transport"
 )
 
+// defaultDSN — имя файла базы данных SQLite рядом с запущенным сервером.
+const defaultDSN = "myaukalo.db"
+
 type App struct {
-	server *nethttp.Server
+	server  *nethttp.Server
+	storage *sqlite.Storage
 }
 
-func New() *App {
-	mux := nethttp.NewServeMux()
-	store := memory.NewMemoryStorage()
+func New() (*App, error) {
+	store, err := sqlite.New(defaultDSN)
+	if err != nil {
+		return nil, err
+	}
 
+	mux := nethttp.NewServeMux()
 	httptransport.RegisterRoutes(mux, store)
 
 	server := &nethttp.Server{
@@ -24,11 +31,17 @@ func New() *App {
 	}
 
 	return &App{
-		server: server,
-	}
+		server:  server,
+		storage: store,
+	}, nil
 }
 
 func (a *App) Run() error {
-	log.Println("myaukalo backend started on :8080")
+	log.Println("myaukalo backend started on :8080 (storage: sqlite)")
 	return a.server.ListenAndServe()
+}
+
+// Shutdown освобождает ресурсы приложения (закрывает БД).
+func (a *App) Shutdown() error {
+	return a.storage.Close()
 }

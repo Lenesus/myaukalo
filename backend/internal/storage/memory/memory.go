@@ -61,46 +61,32 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
+// Проверка на этапе компиляции, что MemoryStorage реализует интерфейс Storage.
 var _ storagecontract.Storage = (*MemoryStorage)(nil)
 
-func (s *MemoryStorage) GetChats() []domain.Chat {
+func (s *MemoryStorage) GetChats() ([]domain.Chat, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	chats := make([]domain.Chat, len(s.chats))
 	copy(chats, s.chats)
 
-	return chats
+	return chats, nil
 }
 
-func (s *MemoryStorage) GetChatByID(chatID string) (domain.Chat, bool) {
+func (s *MemoryStorage) GetChatByID(chatID string) (domain.Chat, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	for _, chat := range s.chats {
 		if chat.ID == chatID {
-			return chat, true
+			return chat, nil
 		}
 	}
-
-	return domain.Chat{}, false
+	return domain.Chat{}, storagecontract.ErrChatNotFound
 }
 
-func (s *MemoryStorage) MarkChatAsRead(chatID string) (domain.Chat, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for index, chat := range s.chats {
-		if chat.ID == chatID {
-			s.chats[index].UnreadCount = 0
-			return s.chats[index], true
-		}
-	}
-
-	return domain.Chat{}, false
-}
-
-func (s *MemoryStorage) AddChat(title string) domain.Chat {
+func (s *MemoryStorage) AddChat(title string) (domain.Chat, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -114,20 +100,33 @@ func (s *MemoryStorage) AddChat(title string) domain.Chat {
 	s.nextChatID++
 	s.chats = append(s.chats, chat)
 
-	return chat
+	return chat, nil
 }
 
-func (s *MemoryStorage) GetMessages() []domain.Message {
+func (s *MemoryStorage) MarkChatAsRead(chatID string) (domain.Chat, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for index, chat := range s.chats {
+		if chat.ID == chatID {
+			s.chats[index].UnreadCount = 0
+			return s.chats[index], nil
+		}
+	}
+	return domain.Chat{}, storagecontract.ErrChatNotFound
+}
+
+func (s *MemoryStorage) GetMessages() ([]domain.Message, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	messages := make([]domain.Message, len(s.messages))
 	copy(messages, s.messages)
 
-	return messages
+	return messages, nil
 }
 
-func (s *MemoryStorage) GetMessagesByChatID(chatID string) []domain.Message {
+func (s *MemoryStorage) GetMessagesByChatID(chatID string) ([]domain.Message, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -139,7 +138,7 @@ func (s *MemoryStorage) GetMessagesByChatID(chatID string) []domain.Message {
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (domain.Message, error) {
@@ -147,7 +146,6 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (d
 	defer s.mu.Unlock()
 
 	chatIndex := -1
-
 	for index, chat := range s.chats {
 		if chat.ID == chatID {
 			chatIndex = index
@@ -156,7 +154,7 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (d
 	}
 
 	if chatIndex == -1 {
-		return domain.Message{}, fmt.Errorf("chat not found")
+		return domain.Message{}, storagecontract.ErrChatNotFound
 	}
 
 	message := domain.Message{
@@ -168,7 +166,6 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (d
 	}
 
 	s.nextMessageID++
-
 	s.messages = append(s.messages, message)
 	s.chats[chatIndex].LastMessage = text
 	s.chats[chatIndex].UnreadCount++
