@@ -8,12 +8,11 @@ import (
 	nethttp "net/http"
 	"time"
 
+	"myaukalo/backend/internal/config"
 	"myaukalo/backend/internal/realtime"
 	"myaukalo/backend/internal/storage/sqlite"
 	httptransport "myaukalo/backend/internal/transport"
 )
-
-const defaultDSN = "myaukalo.db"
 
 type App struct {
 	server  *nethttp.Server
@@ -21,27 +20,23 @@ type App struct {
 	hub     *realtime.Hub
 }
 
-func New() (*App, error) {
-	baseStore, err := sqlite.New(defaultDSN)
+func New(cfg config.Config) (*App, error) {
+	baseStore, err := sqlite.New(cfg.DBPath)
 	if err != nil {
 		return nil, err
 	}
 
 	hub := realtime.NewHub()
 
-	// Транспорт видит только интерфейс storage.Storage и не знает,
-	// что внутри есть рассылка. Магия декоратора.
 	store := realtime.NewPublishingStorage(baseStore, hub)
 
 	mux := nethttp.NewServeMux()
 	httptransport.RegisterRoutes(mux, store)
 
-	// SSE-эндпоинт регистрируем здесь, минуя RegisterRoutes,
-	// чтобы не менять сигнатуру и не ломать routes_test.go.
 	mux.HandleFunc("/api/v1/events", realtime.HandleEvents(hub, store))
 
 	server := &nethttp.Server{
-		Addr:    ":8080",
+		Addr:    fmt.Sprintf(":%d", cfg.Port),
 		Handler: mux,
 	}
 
@@ -53,7 +48,7 @@ func New() (*App, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
-	log.Println("myaukalo backend started on :8080 (storage: sqlite, realtime: sse)")
+	log.Printf("myaukalo backend started on %s (storage: sqlite, realtime: sse)", a.server.Addr)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -64,9 +59,6 @@ func (a *App) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		log.Println("signal received, shutting down gracefully...")
 
-		// Сначала гасим стримы: все SSE-горгутины видят hub.Done() и выходят,
-		// запросы завершаются, и server.Shutdown пролетает мгновенно,
-		// а не ждёт 5 секунд на бесконечных подписках.
 		a.hub.Close()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
