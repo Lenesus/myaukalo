@@ -8,9 +8,10 @@ type Chat struct {
 }
 
 type Message struct {
-	ID        string `json:"id"`
-	ChatID    string `json:"chat_id"`
-	Author    string `json:"author"`
-	Text      string `json:"text"`
-	CreatedAt string `json:"created_at"`
+	ID        string  `json:"id"`
+	ChatID    string  `json:"chat_id"`
+	Author    string  `json:"author"`
+	Text      string  `json:"text"`
+	CreatedAt string  `json:"created_at"`
+	ExpiresAt *string `json:"expires_at,omitempty"`
 }

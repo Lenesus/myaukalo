@@ -5,6 +5,7 @@ import (
 	"errors"
 	nethttp "net/http"
 	"strings"
+	"time"
 
 	"myaukalo/backend/internal/storage"
 )
@@ -14,8 +15,9 @@ type createChatRequest struct {
 }
 
 type createMessageRequest struct {
-	Author string `json:"author"`
-	Text   string `json:"text"`
+	Author string  `json:"author"`
+	Text   string  `json:"text"`
+	TTL    *string `json:"ttl"`
 }
 
 // RegisterRoutes регистрирует HTTP-маршруты приложения
@@ -311,10 +313,39 @@ func handleCreateMessage(
 		return
 	}
 
+	var ttl time.Duration
+	if request.TTL != nil && *request.TTL != "" {
+		parsed, err := time.ParseDuration(*request.TTL)
+		if err != nil {
+			writeJSON(
+				w,
+				nethttp.StatusBadRequest,
+				map[string]string{
+					"error": "invalid ttl",
+				},
+			)
+			return
+		}
+
+		if parsed <= 0 {
+			writeJSON(
+				w,
+				nethttp.StatusBadRequest,
+				map[string]string{
+					"error": "ttl must be positive",
+				},
+			)
+			return
+		}
+
+		ttl = parsed
+	}
+
 	message, err := store.AddMessage(
 		chatID,
 		request.Author,
 		request.Text,
+		ttl,
 	)
 	if err != nil {
 		writeStorageError(w, err)

@@ -46,6 +46,7 @@ func TestAddMessageGeneratesSequentialIDs(t *testing.T) {
 		"chat-1",
 		"Барсик",
 		"Первое новое сообщение",
+		0,
 	)
 	if err != nil {
 		t.Fatalf("failed to add first message: %v", err)
@@ -55,6 +56,7 @@ func TestAddMessageGeneratesSequentialIDs(t *testing.T) {
 		"chat-1",
 		"Мурка",
 		"Второе новое сообщение",
+		0,
 	)
 	if err != nil {
 		t.Fatalf("failed to add second message: %v", err)

@@ -1,6 +1,8 @@
 package realtime
 
 import (
+	"time"
+
 	"myaukalo/backend/internal/domain"
 	"myaukalo/backend/internal/storage"
 )
@@ -40,12 +42,13 @@ func (s *PublishingStorage) GetMessagesByChatID(chatID string) ([]domain.Message
 	return s.inner.GetMessagesByChatID(chatID)
 }
 
-func (s *PublishingStorage) AddMessage(chatID string, author string, text string) (domain.Message, error) {
-	msg, err := s.inner.AddMessage(chatID, author, text)
+func (s *PublishingStorage) AddMessage(chatID string, author string, text string, ttl time.Duration) (domain.Message, error) {
+	message, err := s.inner.AddMessage(chatID, author, text, ttl)
 	if err != nil {
-		return msg, err
+		return message, err
 	}
 
-	s.hub.Publish(msg)
-	return msg, nil
+	s.hub.Publish(message)
+
+	return message, nil
 }

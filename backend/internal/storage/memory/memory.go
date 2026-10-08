@@ -61,7 +61,6 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
-// Проверка на этапе компиляции, что MemoryStorage реализует интерфейс Storage.
 var _ storagecontract.Storage = (*MemoryStorage)(nil)
 
 func (s *MemoryStorage) GetChats() ([]domain.Chat, error) {
@@ -83,6 +82,7 @@ func (s *MemoryStorage) GetChatByID(chatID string) (domain.Chat, error) {
 			return chat, nil
 		}
 	}
+
 	return domain.Chat{}, storagecontract.ErrChatNotFound
 }
 
@@ -113,6 +113,7 @@ func (s *MemoryStorage) MarkChatAsRead(chatID string) (domain.Chat, error) {
 			return s.chats[index], nil
 		}
 	}
+
 	return domain.Chat{}, storagecontract.ErrChatNotFound
 }
 
@@ -120,28 +121,37 @@ func (s *MemoryStorage) GetMessages() ([]domain.Message, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	messages := make([]domain.Message, len(s.messages))
-	copy(messages, s.messages)
+	now := time.Now()
+	out := make([]domain.Message, 0, len(s.messages))
 
-	return messages, nil
+	for _, message := range s.messages {
+		if isExpired(message, now) {
+			continue
+		}
+		out = append(out, message)
+	}
+
+	return out, nil
 }
 
 func (s *MemoryStorage) GetMessagesByChatID(chatID string) ([]domain.Message, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	result := make([]domain.Message, 0)
+	now := time.Now()
+	out := make([]domain.Message, 0)
 
 	for _, message := range s.messages {
-		if message.ChatID == chatID {
-			result = append(result, message)
+		if message.ChatID != chatID || isExpired(message, now) {
+			continue
 		}
+		out = append(out, message)
 	}
 
-	return result, nil
+	return out, nil
 }
 
-func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (domain.Message, error) {
+func (s *MemoryStorage) AddMessage(chatID string, author string, text string, ttl time.Duration) (domain.Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -157,12 +167,18 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (d
 		return domain.Message{}, storagecontract.ErrChatNotFound
 	}
 
+	now := time.Now().UTC()
 	message := domain.Message{
 		ID:        fmt.Sprintf("msg-%d", s.nextMessageID),
 		ChatID:    chatID,
 		Author:    author,
 		Text:      text,
-		CreatedAt: time.Now().Format(time.RFC3339),
+		CreatedAt: now.Format(time.RFC3339),
+	}
+
+	if ttl > 0 {
+		expiresAt := now.Add(ttl).Format(time.RFC3339)
+		message.ExpiresAt = &expiresAt
 	}
 
 	s.nextMessageID++
@@ -171,4 +187,37 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string) (d
 	s.chats[chatIndex].UnreadCount++
 
 	return message, nil
+}
+
+func (s *MemoryStorage) DeleteExpiredMessages(now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	kept := make([]domain.Message, 0, len(s.messages))
+	removed := 0
+
+	for _, message := range s.messages {
+		if isExpired(message, now) {
+			removed++
+			continue
+		}
+		kept = append(kept, message)
+	}
+
+	s.messages = kept
+
+	return removed, nil
+}
+
+func isExpired(message domain.Message, now time.Time) bool {
+	if message.ExpiresAt == nil {
+		return false
+	}
+
+	expiresAt, err := time.Parse(time.RFC3339, *message.ExpiresAt)
+	if err != nil {
+		return true
+	}
+
+	return !expiresAt.After(now)
 }

@@ -20,7 +20,7 @@ func TestPersistence_AcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddChat: %v", err)
 	}
-	if _, err := store1.AddMessage(chat.ID, "Рыжик", "мяу-мяу"); err != nil {
+	if _, err := store1.AddMessage(chat.ID, "Рыжик", "мяу-мяу", 0); err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
 	if err := store1.Close(); err != nil {

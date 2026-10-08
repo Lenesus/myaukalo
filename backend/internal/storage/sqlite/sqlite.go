@@ -14,7 +14,6 @@ import (
 	"myaukalo/backend/internal/storage"
 )
 
-// Проверка на этапе компиляции: *Storage обязан реализовать storage.Storage.
 var _ storage.Storage = (*Storage)(nil)
 
 type Storage struct {
@@ -27,8 +26,6 @@ func New(dsn string) (*Storage, error) {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
 
-	// SQLite плохо переносит конкурентную запись с нескольких соединений,
-	// поэтому ограничиваем пул одним соединением — это спасает от SQLITE_BUSY.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
@@ -62,8 +59,6 @@ func (s *Storage) Close() error {
 	return s.db.Close()
 }
 
-// ---------- Чаты ----------
-
 func (s *Storage) GetChats() ([]domain.Chat, error) {
 	rows, err := s.db.Query(`
 		SELECT id, title, last_message, unread_count
@@ -76,6 +71,7 @@ func (s *Storage) GetChats() ([]domain.Chat, error) {
 	defer rows.Close()
 
 	chats := make([]domain.Chat, 0)
+
 	for rows.Next() {
 		var chat domain.Chat
 		if err := rows.Scan(&chat.ID, &chat.Title, &chat.LastMessage, &chat.UnreadCount); err != nil {
@@ -83,6 +79,7 @@ func (s *Storage) GetChats() ([]domain.Chat, error) {
 		}
 		chats = append(chats, chat)
 	}
+
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate chats: %w", err)
 	}
@@ -114,7 +111,10 @@ func (s *Storage) AddChat(title string) (domain.Chat, error) {
 		return domain.Chat{}, err
 	}
 
-	chat := domain.Chat{ID: id, Title: title}
+	chat := domain.Chat{
+		ID:    id,
+		Title: title,
+	}
 
 	_, err = s.db.Exec(`
 		INSERT INTO chats (id, title, last_message, unread_count)
@@ -148,14 +148,15 @@ func (s *Storage) MarkChatAsRead(chatID string) (domain.Chat, error) {
 	return s.GetChatByID(chatID)
 }
 
-// ---------- Сообщения ----------
-
 func (s *Storage) GetMessages() ([]domain.Message, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
 	rows, err := s.db.Query(`
-		SELECT id, chat_id, author, text, created_at
+		SELECT id, chat_id, author, text, created_at, expires_at
 		FROM messages
+		WHERE expires_at IS NULL OR expires_at > ?
 		ORDER BY created_at, rowid
-	`)
+	`, now)
 	if err != nil {
 		return nil, fmt.Errorf("select messages: %w", err)
 	}
@@ -165,12 +166,14 @@ func (s *Storage) GetMessages() ([]domain.Message, error) {
 }
 
 func (s *Storage) GetMessagesByChatID(chatID string) ([]domain.Message, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
 	rows, err := s.db.Query(`
-		SELECT id, chat_id, author, text, created_at
+		SELECT id, chat_id, author, text, created_at, expires_at
 		FROM messages
-		WHERE chat_id = ?
+		WHERE chat_id = ? AND (expires_at IS NULL OR expires_at > ?)
 		ORDER BY created_at, rowid
-	`, chatID)
+	`, chatID, now)
 	if err != nil {
 		return nil, fmt.Errorf("select messages for chat %s: %w", chatID, err)
 	}
@@ -179,27 +182,30 @@ func (s *Storage) GetMessagesByChatID(chatID string) ([]domain.Message, error) {
 	return scanMessages(rows)
 }
 
-func (s *Storage) AddMessage(chatID string, author string, text string) (domain.Message, error) {
+func (s *Storage) AddMessage(chatID string, author string, text string, ttl time.Duration) (domain.Message, error) {
 	id, err := newID("msg")
 	if err != nil {
 		return domain.Message{}, err
 	}
 
+	now := time.Now().UTC()
 	message := domain.Message{
 		ID:        id,
 		ChatID:    chatID,
 		Author:    author,
 		Text:      text,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		CreatedAt: now.Format(time.RFC3339),
 	}
 
-	// Транзакция: либо обновился чат И вставилось сообщение, либо ничего.
+	if ttl > 0 {
+		expiresAt := now.Add(ttl).Format(time.RFC3339)
+		message.ExpiresAt = &expiresAt
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return domain.Message{}, fmt.Errorf("begin transaction: %w", err)
 	}
-	// Если ниже случится return до Commit — транзакция откатится.
-	// После успешного Commit этот Rollback просто ничего не делает.
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.Exec(`
@@ -219,10 +225,15 @@ func (s *Storage) AddMessage(chatID string, author string, text string) (domain.
 		return domain.Message{}, storage.ErrChatNotFound
 	}
 
+	var expiresAtArg any
+	if message.ExpiresAt != nil {
+		expiresAtArg = *message.ExpiresAt
+	}
+
 	_, err = tx.Exec(`
-		INSERT INTO messages (id, chat_id, author, text, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, message.ID, message.ChatID, message.Author, message.Text, message.CreatedAt)
+		INSERT INTO messages (id, chat_id, author, text, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, message.ID, message.ChatID, message.Author, message.Text, message.CreatedAt, expiresAtArg)
 	if err != nil {
 		return domain.Message{}, fmt.Errorf("insert message: %w", err)
 	}
@@ -234,25 +245,49 @@ func (s *Storage) AddMessage(chatID string, author string, text string) (domain.
 	return message, nil
 }
 
-// ---------- Вспомогательные ----------
+func (s *Storage) DeleteExpiredMessages(now time.Time) (int, error) {
+	result, err := s.db.Exec(`
+		DELETE FROM messages
+		WHERE expires_at IS NOT NULL AND expires_at <= ?
+	`, now.UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, fmt.Errorf("delete expired messages: %w", err)
+	}
 
-// scanMessages читает все строки результата запроса в слайс сообщений.
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected for expiry delete: %w", err)
+	}
+
+	return int(affected), nil
+}
+
 func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 	messages := make([]domain.Message, 0)
 
 	for rows.Next() {
 		var message domain.Message
+		var expiresAt sql.NullString
+
 		if err := rows.Scan(
 			&message.ID,
 			&message.ChatID,
 			&message.Author,
 			&message.Text,
 			&message.CreatedAt,
+			&expiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
+
+		if expiresAt.Valid {
+			value := expiresAt.String
+			message.ExpiresAt = &value
+		}
+
 		messages = append(messages, message)
 	}
+
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate messages: %w", err)
 	}
@@ -260,9 +295,6 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 	return messages, nil
 }
 
-// newID генерирует идентификатор вида "chat-<32 hex>" или "msg-<32 hex>".
-// Используем crypto/rand, а не счётчик: ID непредсказуемы, их нельзя
-// угадать или перебрать — это важно для мессенджера с упором на анонимность.
 func newID(prefix string) (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {

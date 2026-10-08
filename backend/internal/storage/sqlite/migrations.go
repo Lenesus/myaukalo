@@ -25,6 +25,7 @@ var initialMigrationStatements = []string{
 		author TEXT NOT NULL,
 		text TEXT NOT NULL,
 		created_at TEXT NOT NULL,
+		expires_at TEXT,
 
 		FOREIGN KEY (chat_id)
 			REFERENCES chats(id)

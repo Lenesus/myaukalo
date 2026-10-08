@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	nethttp "net/http"
+	"sync"
 	"time"
 
 	"myaukalo/backend/internal/config"
@@ -13,6 +14,8 @@ import (
 	"myaukalo/backend/internal/storage/sqlite"
 	httptransport "myaukalo/backend/internal/transport"
 )
+
+const expiryInterval = 30 * time.Second
 
 type App struct {
 	server  *nethttp.Server
@@ -27,12 +30,10 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	hub := realtime.NewHub()
-
 	store := realtime.NewPublishingStorage(baseStore, hub)
 
 	mux := nethttp.NewServeMux()
 	httptransport.RegisterRoutes(mux, store)
-
 	mux.HandleFunc("/api/v1/events", realtime.HandleEvents(hub, store))
 
 	server := &nethttp.Server{
@@ -48,7 +49,14 @@ func New(cfg config.Config) (*App, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
-	log.Printf("myaukalo backend started on %s (storage: sqlite, realtime: sse)", a.server.Addr)
+	log.Printf("myaukalo backend started on %s (storage: sqlite, realtime: sse, ttl cleanup: %s)", a.server.Addr, expiryInterval)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go a.expiryLoop(runCtx, &wg)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -61,8 +69,8 @@ func (a *App) Run(ctx context.Context) error {
 
 		a.hub.Close()
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
 
 		if err := a.server.Shutdown(shutdownCtx); err != nil {
 			log.Printf("graceful shutdown error: %v", err)
@@ -71,9 +79,15 @@ func (a *App) Run(ctx context.Context) error {
 
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
+			cancel()
+			wg.Wait()
+			_ = a.storage.Close()
 			return fmt.Errorf("server failed: %w", err)
 		}
 	}
+
+	cancel()
+	wg.Wait()
 
 	if err := a.storage.Close(); err != nil {
 		return fmt.Errorf("close storage: %w", err)
@@ -81,4 +95,34 @@ func (a *App) Run(ctx context.Context) error {
 
 	log.Println("server stopped, database closed. meow 🐾")
 	return nil
+}
+
+func (a *App) expiryLoop(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	a.cleanupExpired()
+
+	ticker := time.NewTicker(expiryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.cleanupExpired()
+		}
+	}
+}
+
+func (a *App) cleanupExpired() {
+	removed, err := a.storage.DeleteExpiredMessages(time.Now().UTC())
+	if err != nil {
+		log.Printf("expiry cleanup error: %v", err)
+		return
+	}
+
+	if removed > 0 {
+		log.Printf("expired messages removed: %d", removed)
+	}
 }
