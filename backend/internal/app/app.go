@@ -13,6 +13,7 @@ import (
 	"myaukalo/backend/internal/realtime"
 	"myaukalo/backend/internal/storage/sqlite"
 	httptransport "myaukalo/backend/internal/transport"
+	"myaukalo/backend/internal/web"
 )
 
 const expiryInterval = 30 * time.Second
@@ -35,6 +36,11 @@ func New(cfg config.Config) (*App, error) {
 	mux := nethttp.NewServeMux()
 	httptransport.RegisterRoutes(mux, store)
 	mux.HandleFunc("/api/v1/events", realtime.HandleEvents(hub, store))
+
+	// Статика клиента регистрируется последней: "/" — catch-all, и Go 1.22+
+	// ServeMux сам отдаёт приоритет более специфичным "/api/v1/...", поэтому
+	// порядок регистрации не влияет на матчинг, но «catch-all вниз» читается чище.
+	web.Register(mux)
 
 	server := &nethttp.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),

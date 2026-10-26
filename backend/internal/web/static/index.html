@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru" data-theme="dark" data-cat="off">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>myaukalo</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="view-list">
+  <header class="topbar">
+    <span class="brand">myaukalo</span>
+    <span class="conn" id="conn" title="SSE connection">●</span>
+    <span class="spacer"></span>
+    <button class="iconbtn" id="themeToggle" title="theme" aria-label="toggle theme">☾</button>
+    <button class="iconbtn" id="catToggle" title="cat mode" aria-label="toggle cat mode">cat</button>
+    <button class="iconbtn" id="identityBtn" title="identity" aria-label="identity">⚙</button>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <span class="label">rooms</span>
+        <button class="iconbtn" id="newChatBtn" title="new chat" aria-label="new chat">+</button>
+      </div>
+      <ul class="chatlist" id="chatlist"></ul>
+      <div class="empty" id="chatsEmpty">no rooms. press + to start</div>
+    </aside>
+
+    <main class="room" id="room">
+      <div class="room-head">
+        <button class="iconbtn back" id="backBtn" title="back" aria-label="back">‹</button>
+        <span class="room-title" id="roomTitle">—</span>
+        <span class="spacer"></span>
+        <span class="room-meta" id="roomMeta"></span>
+      </div>
+
+      <div class="feed" id="feed"></div>
+      <div class="empty" id="feedEmpty">nothing here yet</div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <div class="ttlpicker" id="ttlpicker" role="group" aria-label="message ttl">
+          <button type="button" class="chip active" data-ttl="">off</button>
+          <button type="button" class="chip" data-ttl="1m">1m</button>
+          <button type="button" class="chip" data-ttl="5m">5m</button>
+          <button type="button" class="chip" data-ttl="1h">1h</button>
+          <button type="button" class="chip" data-ttl="24h">24h</button>
+        </div>
+        <div class="composer-row">
+          <span class="prompt">&gt;</span>
+          <input id="input" type="text" placeholder="type message" maxlength="2000" />
+          <button class="send" id="sendBtn" type="submit" aria-label="send">⏎</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <dialog id="newChatDialog">
+    <form method="dialog" id="newChatForm">
+      <h3>new room</h3>
+      <label>title (optional)
+        <input id="newChatTitle" type="text" maxlength="80" placeholder="leave empty for auto-name" />
+      </label>
+      <div class="dlg-actions">
+        <button value="cancel" formnovalidate>cancel</button>
+        <button value="default" id="newChatSubmit">create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="identityDialog">
+    <div class="idcard">
+      <h3>your identity</h3>
+      <div class="idavatar" id="idAvatar"></div>
+      <div class="idname"><span id="idName">—</span></div>
+      <p class="idnote">no email · no phone · no history after ttl · id = random token</p>
+      <div class="dlg-actions">
+        <button id="rerollBtn" type="button">reroll</button>
+        <button id="idDoneBtn" type="button">done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>
