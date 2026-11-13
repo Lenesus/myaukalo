@@ -52,6 +52,7 @@ body {
   display: flex; flex-direction: column;
 }
 .spacer { flex: 1; }
+[hidden] { display: none !important; }
 
 /* ===== topbar ===== */
 .topbar {
@@ -92,6 +93,13 @@ body.view-chat .sidebar { display: none; }
   padding: 10px 12px; border-bottom: 1px solid var(--line);
 }
 .label { color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: .08em; }
+.searchbar { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.searchbar input {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 6px 8px; font: inherit; font-size: 13px; outline: none;
+}
+.searchbar input:focus { border-color: var(--accent); }
 .chatlist { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
 .chatrow {
   display: flex; align-items: center; gap: 8px;
@@ -117,6 +125,12 @@ body.view-chat .sidebar { display: none; }
   padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
 }
 .room-title { font-weight: 700; }
+.msgsearch {
+  flex: 0 1 160px; min-width: 90px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 5px 8px; font: inherit; font-size: 13px; outline: none;
+}
+.msgsearch:focus { border-color: var(--accent); }
 .room-meta { color: var(--muted); font-size: 12px; }
 .feed { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 2px; }
 
@@ -138,7 +152,6 @@ body.view-chat .sidebar { display: none; }
 .msg .ttl .ttl-text { color: var(--muted); font-size: 11px; }
 .msg .ttl.expiring .ring-fg { stroke: var(--danger); }
 .msg .ttl.expiring .ttl-text { color: var(--danger); }
-/* в bitchat-режиме TTL — компактный inline-хвост строки */
 body:not([data-cat="on"]) .msg .ttl { display: inline-flex; }
 
 /* cat-оверрайд: пузыри, свои справа; TTL — бейдж на пузыре */
@@ -203,6 +216,7 @@ dialog input[type=text] {
   border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; font: inherit;
 }
 .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.idio { justify-content: flex-start; }
 .idcard { text-align: center; }
 .idavatar svg { width: 64px; height: 64px; }
 .idname { font-weight: 700; margin: 8px 0; }

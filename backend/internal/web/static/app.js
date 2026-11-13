@@ -18,6 +18,8 @@
     theme: "dark",
     cat: false,
     ttl: "",            // выбранная duration-строка для ОТПРАВКИ ("" = бессрочно)
+    chatQuery: "",      // фильтр списка комнат по заголовку (клиентский)
+    msgQuery: "",       // фильтр загруженных сообщений открытой комнаты по тексту (клиентский)
   };
 
   // ---------- утилиты ----------
@@ -49,6 +51,11 @@
     if (s >= 60) return Math.floor(s / 60) + "m";
     return s + "s";
   };
+  const matches = (needle, hay) => {
+    needle = needle.trim().toLowerCase();
+    if (!needle) return true;
+    return String(hay || "").toLowerCase().includes(needle);
+  };
 
   // ---------- идентичность ----------
   const ADJ = ["полосатик","пушистик","рыжик","мурзик","барсик","снежок","уголёк","персик","зефирка","масяня","тигрик","котлетка"];
@@ -67,6 +74,40 @@
     }
   };
   const saveIdentity = () => { try { localStorage.setItem(LS_ID, JSON.stringify(state.identity)); } catch (_) {} };
+
+  // Экспорт/импорт идентичности — чисто клиентские, бэкенд не участвует:
+  // identity живёт в localStorage как {name, seed}, поэтому export = скачать JSON,
+  // import = прочитать JSON и восстановить. Валидируем форму, мусор не принимаем.
+  const exportIdentity = () => {
+    const blob = new Blob([JSON.stringify(state.identity, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "myaukalo-identity.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+  const importIdentity = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const obj = JSON.parse(reader.result);
+        if (!obj || typeof obj.name !== "string" || typeof obj.seed !== "string") {
+          throw new Error("bad identity shape");
+        }
+        state.identity = { name: obj.name, seed: obj.seed };
+        saveIdentity();
+        renderIdentityCard();
+        renderChatList();   // аватары/alias зависят от identity в cat-режиме
+        renderFeed();
+      } catch (_) {
+        // невалидный файл: молча оставляем текущую идентичность, не крашим UI
+      }
+    };
+    reader.readAsText(file);
+  };
 
   // ---------- генеративный аватар (детерминирован по seed) ----------
   const COATS = ["#e8a87c","#c98b5e","#9c9c9c","#5b5b5b","#f0e6d2","#d98c5f","#7a8b6f"];
@@ -143,8 +184,14 @@
   const renderChatList = () => {
     const ul = $("#chatlist");
     ul.textContent = "";
-    $("#chatsEmpty").style.display = state.chats.length ? "none" : "block";
-    for (const chat of state.chats) {
+    const shown = state.chats.filter((c) => matches(state.chatQuery, c.title));
+    const emptyEl = $("#chatsEmpty");
+    emptyEl.style.display = shown.length ? "none" : "block";
+    // различаем «вовсе нет комнат» и «есть, но фильтр ничего не поймал»
+    emptyEl.textContent = (state.chatQuery.trim() && state.chats.length && !shown.length)
+      ? "no rooms match"
+      : "no rooms. press + to start";
+    for (const chat of shown) {
       const li = el("li", "chatrow" + (chat.id === state.activeChatId ? " active" : ""));
       li.dataset.id = chat.id;
 
@@ -166,6 +213,9 @@
     state.activeChatId = id;
     state.messages = [];
     state.seenIds = new Set();
+    // комнатный фильтр привязан к конкретной комнате => сбрасываем при входе
+    state.msgQuery = "";
+    const ms = $("#msgSearch"); if (ms) ms.value = "";
     document.body.classList.remove("view-list");
     document.body.classList.add("view-chat");
     renderChatList();
@@ -189,8 +239,13 @@
   const renderFeed = () => {
     const feed = $("#feed");
     feed.textContent = "";
-    $("#feedEmpty").style.display = state.messages.length ? "none" : "block";
-    for (const m of state.messages) feed.appendChild(buildMsg(m, false));
+    const shown = state.messages.filter((m) => matches(state.msgQuery, m.text));
+    const emptyEl = $("#feedEmpty");
+    emptyEl.style.display = shown.length ? "none" : "block";
+    emptyEl.textContent = (state.msgQuery.trim() && state.messages.length && !shown.length)
+      ? "no messages match"
+      : "nothing here yet";
+    for (const m of shown) feed.appendChild(buildMsg(m, false));
     scrollFeed();
   };
 
@@ -232,8 +287,11 @@
   const appendMsg = (m) => {
     if (state.seenIds.has(m.id)) return;     // дедуп optimistic vs SSE по message.id
     state.seenIds.add(m.id);
-    state.messages.push(m);
+    state.messages.push(m);                  // храним ВСЕГДА, даже если сейчас скрыт фильтром
     if (m.chatId !== state.activeChatId) return;
+    // если активен комнатный фильтр и сообщение не подходит — не рисуем, но в state оно есть;
+    // при сбросе/смене фильтра renderFeed перестроит ленту из state.messages и ничего не потеряет
+    if (!matches(state.msgQuery, m.text)) return;
     $("#feedEmpty").style.display = "none";
     $("#feed").appendChild(buildMsg(m, true));
     scrollFeed();
@@ -243,8 +301,6 @@
   const scrollFeed = () => { const f = $("#feed"); f.scrollTop = f.scrollHeight; };
 
   // ---------- TTL-тиккер: ОДИН setInterval на всё приложение ----------
-  // Проходим по DOM, а не вешаем таймер на каждое сообщение: меньше утечек,
-  // и новые ноды (из SSE/optimistic) подхватываются автоматически.
   const tickTTL = () => {
     const now = Date.now();
     const nodes = document.querySelectorAll(".ttl[data-expires]");
@@ -255,20 +311,18 @@
       const id = msgNode ? msgNode.dataset.id : null;
 
       if (now >= exp) {
-        // истекло: убираем из DOM и из состояния (seenIds оставляем — SSE-дубликат не вернёт)
         if (msgNode) msgNode.remove();
         if (id) state.messages = state.messages.filter((x) => x.id !== id);
         if (!state.messages.length) $("#feedEmpty").style.display = "block";
         continue;
       }
 
-      const total = (exp - cr) || 1;          // защита от деления на 0
+      const total = (exp - cr) || 1;
       const frac = Math.min(1, Math.max(0, (exp - now) / total));
       const fg = node.querySelector(".ring-fg");
       const txt = node.querySelector(".ttl-text");
       if (fg) fg.setAttribute("stroke-dashoffset", (RING_CIRC * (1 - frac)).toFixed(2));
       if (txt) txt.textContent = fmtLeft(exp - now);
-      // последние 10% жизни — тревожный цвет
       node.classList.toggle("expiring", frac <= 0.1);
     }
   };
@@ -298,10 +352,12 @@
     const optimistic = { id: tmpId, chatId: state.activeChatId, author: state.identity.name, text, createdAt: new Date().toISOString(), expiresAt: null, _pending: true };
     state.seenIds.add(tmpId);
     state.messages.push(optimistic);
-    $("#feedEmpty").style.display = "none";
-    const node = buildMsg(optimistic, true);
-    $("#feed").appendChild(node);
-    scrollFeed();
+    if (matches(state.msgQuery, text)) {
+      $("#feedEmpty").style.display = "none";
+      const node = buildMsg(optimistic, true);
+      $("#feed").appendChild(node);
+      scrollFeed();
+    }
 
     const body = { author: state.identity.name, text };
     if (state.ttl) body.ttl = state.ttl;       // duration-строка: "5m","1h",... (контракт routes.go:20)
@@ -315,30 +371,32 @@
       state.seenIds.add(saved.id);
       const idx = state.messages.findIndex((x) => x.id === tmpId);
       if (idx >= 0) state.messages[idx] = { id: saved.id, chatId: saved.chat_id, author: saved.author, text: saved.text, createdAt: saved.created_at, expiresAt: saved.expires_at || null };
-      node.dataset.id = saved.id;
-      node.classList.remove("pending");
-      // перерисовываем TTL-кольцо под реальный expires_at из ответа
-      const oldTtl = node.querySelector(".ttl");
-      if (oldTtl) oldTtl.remove();
-      if (saved.expires_at) {
-        const createdMs = Date.parse(saved.created_at || "") || 0;
-        const expiresMs = Date.parse(saved.expires_at) || 0;
-        if (expiresMs > 0) {
-          const ttl = el("span", "ttl");
-          ttl.dataset.expires = String(expiresMs);
-          ttl.dataset.created = String(createdMs);
-          ttl.innerHTML =
-            '<svg class="ring" viewBox="0 0 16 16">' +
-            '<circle class="ring-bg" cx="8" cy="8" r="6"/>' +
-            '<circle class="ring-fg" cx="8" cy="8" r="6" stroke-dasharray="' + RING_CIRC.toFixed(2) + '" stroke-dashoffset="0"/>' +
-            '</svg><span class="ttl-text"></span>';
-          node.appendChild(ttl);
+      const node = document.querySelector('.msg[data-id="' + tmpId.replace(/"/g, '\\"') + '"]');
+      if (node) {
+        node.dataset.id = saved.id;
+        node.classList.remove("pending");
+        const oldTtl = node.querySelector(".ttl");
+        if (oldTtl) oldTtl.remove();
+        if (saved.expires_at) {
+          const createdMs = Date.parse(saved.created_at || "") || 0;
+          const expiresMs = Date.parse(saved.expires_at) || 0;
+          if (expiresMs > 0) {
+            const ttl = el("span", "ttl");
+            ttl.dataset.expires = String(expiresMs);
+            ttl.dataset.created = String(createdMs);
+            ttl.innerHTML =
+              '<svg class="ring" viewBox="0 0 16 16">' +
+              '<circle class="ring-bg" cx="8" cy="8" r="6"/>' +
+              '<circle class="ring-fg" cx="8" cy="8" r="6" stroke-dasharray="' + RING_CIRC.toFixed(2) + '" stroke-dashoffset="0"/>' +
+              '</svg><span class="ttl-text"></span>';
+            node.appendChild(ttl);
+          }
         }
       }
     } catch (e) {
       optimistic._failed = true;
-      node.classList.remove("pending");
-      node.classList.add("failed");
+      const node = document.querySelector('.msg[data-id="' + tmpId.replace(/"/g, '\\"') + '"]');
+      if (node) { node.classList.remove("pending"); node.classList.add("failed"); }
     }
   };
 
@@ -370,6 +428,19 @@
     $("#idDoneBtn").addEventListener("click", () => $("#identityDialog").close());
     $("#rerollBtn").addEventListener("click", () => { state.identity = { name: rollName(), seed: Math.random().toString(36).slice(2) }; saveIdentity(); renderIdentityCard(); renderFeed(); });
 
+    // экспорт/импорт идентичности
+    $("#exportBtn").addEventListener("click", exportIdentity);
+    $("#importBtn").addEventListener("click", () => $("#importFile").click());
+    $("#importFile").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (f) importIdentity(f);
+      e.target.value = "";   // позволяем повторно выбрать тот же файл
+    });
+
+    // фильтры: список комнат (глобальный) и открытая комната (локальный)
+    $("#chatSearch").addEventListener("input", (e) => { state.chatQuery = e.target.value; renderChatList(); });
+    $("#msgSearch").addEventListener("input", (e) => { state.msgQuery = e.target.value; renderFeed(); });
+
     // TTL-пикер: клик по чипу фиксирует duration-строку в state.ttl
     $("#ttlpicker").addEventListener("click", (e) => {
       const chip = e.target.closest(".chip");
@@ -379,8 +450,10 @@
     });
 
     $("#newChatBtn").addEventListener("click", () => { $("#newChatTitle").value = ""; $("#newChatDialog").showModal(); });
+    $("#newChatCancel").addEventListener("click", () => $("#newChatDialog").close());
     $("#newChatForm").addEventListener("submit", (e) => {
-      if (e.target.returnValue === "default") { e.preventDefault(); createChat($("#newChatTitle").value).finally(() => $("#newChatDialog").close()); }
+      e.preventDefault();
+      createChat($("#newChatTitle").value).finally(() => $("#newChatDialog").close());
     });
 
     $("#composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#input").value; $("#input").value = ""; sendMessage(v); });
