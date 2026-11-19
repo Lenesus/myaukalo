@@ -17,3 +17,7 @@ func (f *fakeStorage) AddReaction(messageID string, user string, emoji string) (
 func (f *fakeStorage) RemoveReaction(messageID string, user string, emoji string) (domain.Message, error) {
 	return domain.Message{}, storage.ErrMessageNotFound
 }
+
+func (f *fakeStorage) NotifyTyping(chatID string, user string) error {
+	return nil
+}

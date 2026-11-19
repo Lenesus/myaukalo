@@ -24,4 +24,8 @@ type Storage interface {
 	// мог опубликовать его тем же hub.Publish (реакции едут в event: message).
 	AddReaction(messageID string, user string, emoji string) (domain.Message, error)
 	RemoveReaction(messageID string, user string, emoji string) (domain.Message, error)
+
+	// NotifyTyping — эфемерный сигнал «печатает…», не хранится.
+	// Inner-реализации no-op; декоратор рассылает через hub.
+	NotifyTyping(chatID string, user string) error
 }

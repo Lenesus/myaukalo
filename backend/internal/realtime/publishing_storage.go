@@ -74,3 +74,9 @@ func (s *PublishingStorage) RemoveReaction(messageID string, user string, emoji 
 
 	return message, nil
 }
+
+func (s *PublishingStorage) NotifyTyping(chatID string, user string) error {
+	// Эфемерный сигнал: не пишем в inner, только рассылаем зрителям.
+	s.hub.PublishTyping(chatID, user)
+	return nil
+}

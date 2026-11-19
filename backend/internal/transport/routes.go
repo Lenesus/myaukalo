@@ -186,6 +186,16 @@ func handleChatRoute(
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "typing" {
+		handleChatTyping(
+			w,
+			r,
+			store,
+			parts[0],
+		)
+		return
+	}
+
 	if len(parts) == 4 && parts[1] == "messages" && parts[3] == "reactions" {
 		handleChatMessageReactions(
 			w,

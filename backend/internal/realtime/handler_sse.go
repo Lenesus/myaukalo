@@ -45,6 +45,9 @@ func HandleEvents(hub *Hub, store storage.Storage) nethttp.HandlerFunc {
 		ch := hub.Subscribe(chatID)
 		defer hub.Unsubscribe(chatID, ch)
 
+		typingCh := hub.SubscribeTyping(chatID)
+		defer hub.UnsubscribeTyping(chatID, typingCh)
+
 		if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
 			return
 		}
@@ -65,6 +68,16 @@ func HandleEvents(hub *Hub, store storage.Storage) nethttp.HandlerFunc {
 				}
 
 				if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", data); err != nil {
+					return
+				}
+				flusher.Flush()
+			case user := <-typingCh:
+				data, err := json.Marshal(map[string]string{"user": user})
+				if err != nil {
+					continue
+				}
+
+				if _, err := fmt.Fprintf(w, "event: typing\ndata: %s\n\n", data); err != nil {
 					return
 				}
 				flusher.Flush()

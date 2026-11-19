@@ -11,14 +11,17 @@ type Hub struct {
 	mu   sync.Mutex
 	subs map[string]map[chan domain.Message]struct{}
 
+	typingSubs map[string]map[chan string]struct{}
+
 	done      chan struct{}
 	closeOnce sync.Once
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		subs: make(map[string]map[chan domain.Message]struct{}),
-		done: make(chan struct{}),
+		subs:       make(map[string]map[chan domain.Message]struct{}),
+		typingSubs: make(map[string]map[chan string]struct{}),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -78,6 +81,56 @@ func (h *Hub) Publish(msg domain.Message) {
 	for ch := range h.subs[msg.ChatID] {
 		select {
 		case ch <- msg:
+		default:
+		}
+	}
+}
+
+// TypingSubscriberCount — наблюдаемость для typing-подписчиков.
+func (h *Hub) TypingSubscriberCount(chatID string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.typingSubs[chatID])
+}
+
+// SubscribeTyping регистрирует зрителя typing-событий чата.
+func (h *Hub) SubscribeTyping(chatID string) chan string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ch := make(chan string, 16)
+
+	set := h.typingSubs[chatID]
+	if set == nil {
+		set = make(map[chan string]struct{})
+		h.typingSubs[chatID] = set
+	}
+	set[ch] = struct{}{}
+
+	return ch
+}
+
+// UnsubscribeTyping удаляет typing-зрителя. Канал не закрываем (см. Unsubscribe).
+func (h *Hub) UnsubscribeTyping(chatID string, ch chan string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if set, ok := h.typingSubs[chatID]; ok {
+		delete(set, ch)
+		if len(set) == 0 {
+			delete(h.typingSubs, chatID)
+		}
+	}
+}
+
+// PublishTyping рассылает имя печатающего зрителям чата (неблокирующе).
+func (h *Hub) PublishTyping(chatID string, user string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for ch := range h.typingSubs[chatID] {
+		select {
+		case ch <- user:
 		default:
 		}
 	}
