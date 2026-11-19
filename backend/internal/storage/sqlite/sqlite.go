@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -160,9 +161,20 @@ func (s *Storage) GetMessages() ([]domain.Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("select messages: %w", err)
 	}
-	defer rows.Close()
 
-	return scanMessages(rows)
+	messages, err := scanMessages(rows)
+	// ВАЖНО: закрываем rows ДО второго запроса за реакциями —
+	// SetMaxOpenConns(1), иначе deadlock на одном соединении.
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.attachReactions(messages); err != nil {
+		return nil, err
+	}
+
+	return messages, nil
 }
 
 func (s *Storage) GetMessagesByChatID(chatID string) ([]domain.Message, error) {
@@ -177,9 +189,18 @@ func (s *Storage) GetMessagesByChatID(chatID string) ([]domain.Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("select messages for chat %s: %w", chatID, err)
 	}
-	defer rows.Close()
 
-	return scanMessages(rows)
+	messages, err := scanMessages(rows)
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.attachReactions(messages); err != nil {
+		return nil, err
+	}
+
+	return messages, nil
 }
 
 func (s *Storage) AddMessage(chatID string, author string, text string, ttl time.Duration) (domain.Message, error) {
@@ -260,6 +281,164 @@ func (s *Storage) DeleteExpiredMessages(now time.Time) (int, error) {
 	}
 
 	return int(affected), nil
+}
+
+// AddReaction идемпотентно добавляет (user,emoji) к сообщению и возвращает
+// обновлённое сообщение с агрегированными реакциями.
+func (s *Storage) AddReaction(messageID string, user string, emoji string) (domain.Message, error) {
+	if _, err := s.messageChatID(messageID); err != nil {
+		return domain.Message{}, err
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR IGNORE INTO reactions (message_id, user, emoji)
+		VALUES (?, ?, ?)
+	`, messageID, user, emoji)
+	if err != nil {
+		return domain.Message{}, fmt.Errorf("insert reaction: %w", err)
+	}
+
+	return s.getMessageWithReactions(messageID)
+}
+
+// RemoveReaction удаляет (user,emoji) и возвращает обновлённое сообщение.
+func (s *Storage) RemoveReaction(messageID string, user string, emoji string) (domain.Message, error) {
+	if _, err := s.messageChatID(messageID); err != nil {
+		return domain.Message{}, err
+	}
+
+	_, err := s.db.Exec(`
+		DELETE FROM reactions
+		WHERE message_id = ? AND user = ? AND emoji = ?
+	`, messageID, user, emoji)
+	if err != nil {
+		return domain.Message{}, fmt.Errorf("delete reaction: %w", err)
+	}
+
+	return s.getMessageWithReactions(messageID)
+}
+
+// messageChatID проверяет, что сообщение существует и не протухло.
+func (s *Storage) messageChatID(messageID string) (string, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	var chatID string
+	err := s.db.QueryRow(`
+		SELECT chat_id
+		FROM messages
+		WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)
+	`, messageID, now).Scan(&chatID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", storage.ErrMessageNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("select message %s: %w", messageID, err)
+	}
+
+	return chatID, nil
+}
+
+func (s *Storage) getMessageWithReactions(messageID string) (domain.Message, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	var message domain.Message
+	var expiresAt sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, chat_id, author, text, created_at, expires_at
+		FROM messages
+		WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)
+	`, messageID, now).Scan(
+		&message.ID, &message.ChatID, &message.Author,
+		&message.Text, &message.CreatedAt, &expiresAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Message{}, storage.ErrMessageNotFound
+	}
+	if err != nil {
+		return domain.Message{}, fmt.Errorf("select message %s: %w", messageID, err)
+	}
+
+	if expiresAt.Valid {
+		value := expiresAt.String
+		message.ExpiresAt = &value
+	}
+
+	messages := []domain.Message{message}
+	if err := s.attachReactions(messages); err != nil {
+		return domain.Message{}, err
+	}
+
+	return messages[0], nil
+}
+
+// attachReactions грузит реакции для всех переданных сообщений ОДНИМ запросом
+// и агрегирует по эмодзи, сохраняя порядок первого появления.
+func (s *Storage) attachReactions(messages []domain.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, len(messages))
+	args := make([]any, len(messages))
+	for i, m := range messages {
+		placeholders[i] = "?"
+		args[i] = m.ID
+	}
+
+	rows, err := s.db.Query(`
+		SELECT message_id, user, emoji
+		FROM reactions
+		WHERE message_id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY rowid
+	`, args...)
+	if err != nil {
+		return fmt.Errorf("select reactions: %w", err)
+	}
+	defer rows.Close()
+
+	usersByEmoji := make(map[string]map[string][]string)
+	emojiOrder := make(map[string][]string)
+
+	for rows.Next() {
+		var messageID, user, emoji string
+		if err := rows.Scan(&messageID, &user, &emoji); err != nil {
+			return fmt.Errorf("scan reaction: %w", err)
+		}
+
+		byEmoji, ok := usersByEmoji[messageID]
+		if !ok {
+			byEmoji = make(map[string][]string)
+			usersByEmoji[messageID] = byEmoji
+		}
+
+		if _, seen := byEmoji[emoji]; !seen {
+			emojiOrder[messageID] = append(emojiOrder[messageID], emoji)
+		}
+		byEmoji[emoji] = append(byEmoji[emoji], user)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate reactions: %w", err)
+	}
+
+	for i := range messages {
+		order := emojiOrder[messages[i].ID]
+		if len(order) == 0 {
+			continue
+		}
+
+		reactions := make([]domain.Reaction, 0, len(order))
+		for _, emoji := range order {
+			reactions = append(reactions, domain.Reaction{
+				Emoji: emoji,
+				Users: usersByEmoji[messages[i].ID][emoji],
+			})
+		}
+		messages[i].Reactions = reactions
+	}
+
+	return nil
 }
 
 func scanMessages(rows *sql.Rows) ([]domain.Message, error) {

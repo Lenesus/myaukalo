@@ -9,10 +9,16 @@ import (
 	storagecontract "myaukalo/backend/internal/storage"
 )
 
+type reactionEntry struct {
+	User  string
+	Emoji string
+}
+
 type MemoryStorage struct {
 	mu            sync.RWMutex
 	chats         []domain.Chat
 	messages      []domain.Message
+	reactions     map[string][]reactionEntry
 	nextChatID    int
 	nextMessageID int
 }
@@ -56,6 +62,7 @@ func NewMemoryStorage() *MemoryStorage {
 				CreatedAt: "2026-05-20T13:02:00Z",
 			},
 		},
+		reactions:     make(map[string][]reactionEntry),
 		nextChatID:    3,
 		nextMessageID: 4,
 	}
@@ -131,6 +138,8 @@ func (s *MemoryStorage) GetMessages() ([]domain.Message, error) {
 		out = append(out, message)
 	}
 
+	s.attachReactions(out)
+
 	return out, nil
 }
 
@@ -147,6 +156,8 @@ func (s *MemoryStorage) GetMessagesByChatID(chatID string) ([]domain.Message, er
 		}
 		out = append(out, message)
 	}
+
+	s.attachReactions(out)
 
 	return out, nil
 }
@@ -189,6 +200,48 @@ func (s *MemoryStorage) AddMessage(chatID string, author string, text string, tt
 	return message, nil
 }
 
+func (s *MemoryStorage) AddReaction(messageID string, user string, emoji string) (domain.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.messageIndex(messageID)
+	if index == -1 || isExpired(s.messages[index], time.Now()) {
+		return domain.Message{}, storagecontract.ErrMessageNotFound
+	}
+
+	entries := s.reactions[messageID]
+	for _, entry := range entries {
+		if entry.User == user && entry.Emoji == emoji {
+			return s.messageWithReactions(index), nil
+		}
+	}
+
+	s.reactions[messageID] = append(entries, reactionEntry{User: user, Emoji: emoji})
+
+	return s.messageWithReactions(index), nil
+}
+
+func (s *MemoryStorage) RemoveReaction(messageID string, user string, emoji string) (domain.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.messageIndex(messageID)
+	if index == -1 || isExpired(s.messages[index], time.Now()) {
+		return domain.Message{}, storagecontract.ErrMessageNotFound
+	}
+
+	kept := make([]reactionEntry, 0, len(s.reactions[messageID]))
+	for _, entry := range s.reactions[messageID] {
+		if entry.User == user && entry.Emoji == emoji {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	s.reactions[messageID] = kept
+
+	return s.messageWithReactions(index), nil
+}
+
 func (s *MemoryStorage) DeleteExpiredMessages(now time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -199,6 +252,7 @@ func (s *MemoryStorage) DeleteExpiredMessages(now time.Time) (int, error) {
 	for _, message := range s.messages {
 		if isExpired(message, now) {
 			removed++
+			delete(s.reactions, message.ID)
 			continue
 		}
 		kept = append(kept, message)
@@ -207,6 +261,53 @@ func (s *MemoryStorage) DeleteExpiredMessages(now time.Time) (int, error) {
 	s.messages = kept
 
 	return removed, nil
+}
+
+func (s *MemoryStorage) messageIndex(messageID string) int {
+	for index, message := range s.messages {
+		if message.ID == messageID {
+			return index
+		}
+	}
+	return -1
+}
+
+func (s *MemoryStorage) messageWithReactions(index int) domain.Message {
+	message := s.messages[index]
+	message.Reactions = aggregateReactions(s.reactions[message.ID])
+	return message
+}
+
+func (s *MemoryStorage) attachReactions(out []domain.Message) {
+	for i := range out {
+		out[i].Reactions = aggregateReactions(s.reactions[out[i].ID])
+	}
+}
+
+func aggregateReactions(entries []reactionEntry) []domain.Reaction {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	order := make([]string, 0)
+	byEmoji := make(map[string][]string)
+
+	for _, entry := range entries {
+		if _, seen := byEmoji[entry.Emoji]; !seen {
+			order = append(order, entry.Emoji)
+		}
+		byEmoji[entry.Emoji] = append(byEmoji[entry.Emoji], entry.User)
+	}
+
+	reactions := make([]domain.Reaction, 0, len(order))
+	for _, emoji := range order {
+		reactions = append(reactions, domain.Reaction{
+			Emoji: emoji,
+			Users: byEmoji[emoji],
+		})
+	}
+
+	return reactions
 }
 
 func isExpired(message domain.Message, now time.Time) bool {

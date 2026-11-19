@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"myaukalo/backend/internal/domain"
 	"myaukalo/backend/internal/storage"
 )
 
@@ -18,6 +19,11 @@ type createMessageRequest struct {
 	Author string  `json:"author"`
 	Text   string  `json:"text"`
 	TTL    *string `json:"ttl"`
+}
+
+type reactionRequest struct {
+	User  string `json:"user"`
+	Emoji string `json:"emoji"`
 }
 
 // RegisterRoutes регистрирует HTTP-маршруты приложения
@@ -176,6 +182,17 @@ func handleChatRoute(
 			r,
 			store,
 			parts[0],
+		)
+		return
+	}
+
+	if len(parts) == 4 && parts[1] == "messages" && parts[3] == "reactions" {
+		handleChatMessageReactions(
+			w,
+			r,
+			store,
+			parts[0],
+			parts[2],
 		)
 		return
 	}
@@ -385,6 +402,85 @@ func handleChatRead(
 	writeJSON(w, nethttp.StatusOK, chat)
 }
 
+// handleChatMessageReactions обслуживает
+// POST/DELETE /api/v1/chats/{chatID}/messages/{messageID}/reactions.
+// POST добавляет (user,emoji), DELETE убирает. Возвращает обновлённое сообщение.
+func handleChatMessageReactions(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	store storage.Storage,
+	chatID string,
+	messageID string,
+) {
+	// Метод проверяем ДО декода тела: у GET/прочих тела может не быть,
+	// и декод упал бы в 400 вместо честного 405.
+	if r.Method != nethttp.MethodPost && r.Method != nethttp.MethodDelete {
+		writeJSON(
+			w,
+			nethttp.StatusMethodNotAllowed,
+			map[string]string{
+				"error": "method not allowed",
+			},
+		)
+		return
+	}
+
+	var request reactionRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(
+			w,
+			nethttp.StatusBadRequest,
+			map[string]string{
+				"error": "invalid request body",
+			},
+		)
+		return
+	}
+
+	request.User = strings.TrimSpace(request.User)
+	request.Emoji = strings.TrimSpace(request.Emoji)
+
+	if request.User == "" || request.Emoji == "" {
+		writeJSON(
+			w,
+			nethttp.StatusBadRequest,
+			map[string]string{
+				"error": "user and emoji are required",
+			},
+		)
+		return
+	}
+
+	var message domain.Message
+	var err error
+
+	if r.Method == nethttp.MethodPost {
+		message, err = store.AddReaction(messageID, request.User, request.Emoji)
+	} else {
+		message, err = store.RemoveReaction(messageID, request.User, request.Emoji)
+	}
+
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+
+	// Сообщение должно принадлежать чату из пути, иначе 404 (не выдаём чужие).
+	if message.ChatID != chatID {
+		writeJSON(
+			w,
+			nethttp.StatusNotFound,
+			map[string]string{
+				"error": "message not found",
+			},
+		)
+		return
+	}
+
+	writeJSON(w, nethttp.StatusOK, message)
+}
+
 func handleMessages(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
@@ -420,6 +516,17 @@ func writeStorageError(
 			nethttp.StatusNotFound,
 			map[string]string{
 				"error": "chat not found",
+			},
+		)
+		return
+	}
+
+	if errors.Is(err, storage.ErrMessageNotFound) {
+		writeJSON(
+			w,
+			nethttp.StatusNotFound,
+			map[string]string{
+				"error": "message not found",
 			},
 		)
 		return

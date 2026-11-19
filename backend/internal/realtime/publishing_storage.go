@@ -52,3 +52,25 @@ func (s *PublishingStorage) AddMessage(chatID string, author string, text string
 
 	return message, nil
 }
+
+func (s *PublishingStorage) AddReaction(messageID string, user string, emoji string) (domain.Message, error) {
+	message, err := s.inner.AddReaction(messageID, user, emoji)
+	if err != nil {
+		return message, err
+	}
+
+	s.hub.Publish(message)
+
+	return message, nil
+}
+
+func (s *PublishingStorage) RemoveReaction(messageID string, user string, emoji string) (domain.Message, error) {
+	message, err := s.inner.RemoveReaction(messageID, user, emoji)
+	if err != nil {
+		return message, err
+	}
+
+	s.hub.Publish(message)
+
+	return message, nil
+}
